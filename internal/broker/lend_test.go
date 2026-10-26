@@ -160,6 +160,49 @@ func TestSizedWaiterIsGrantedByALend(t *testing.T) {
 	}
 }
 
+// A whole-card holder on a card with a baseline (a display, a driver's own
+// memory) is asked for the waiter's need plus that baseline: the baseline was
+// never the holder's to count, so a lend of the need alone leaves the waiter
+// short by it, and the waiter is granted without a drain.
+func TestLendOnACardWithABaselineCoversIt(t *testing.T) {
+	b, c, _ := setup(t, lendTree(100, 101, 200, 201))
+	holder := serving(t, b, c, "maya", 100, 101, 22*GiB)
+	c.used = 22*GiB + 512*gpu.MiB // 512 MiB that no process holds
+	b.Tick(context.Background())
+
+	w := acquire(b, Request{Engine: "voice", Priority: Foreground, Needs: 4 * GiB})
+	pending(t, w)
+
+	if got, want := takeLend(t, holder), (LendAsk{MiB: 4608, FreeMiB: 1536}); got != want {
+		t.Fatalf("lend ask = %+v, want %+v", got, want)
+	}
+
+	holder.Lent("t1", 4608*gpu.MiB)
+	c.used = 18 * GiB // the holder at 17.5 GiB, plus the baseline
+	c.set(gpu.Proc{PID: 101, Name: "maya", Used: 17*GiB + 512*gpu.MiB})
+	b.Tick(context.Background())
+	borrower := granted(t, b, "voice", w)
+	noDrain(t, holder)
+	if got := statusOf(t, b, "maya"); got.State != "active" {
+		t.Fatalf("holder state = %s, want active: a lending engine keeps serving", got.State)
+	}
+
+	// The borrower runs and goes. The whole-card holder's own count already
+	// covers the baseline, so the take-back is asked once the borrower's
+	// memory is gone, with nothing else on the card.
+	borrower.Attach(200)
+	c.used = 22 * GiB
+	c.set(gpu.Proc{PID: 101, Name: "maya", Used: 17*GiB + 512*gpu.MiB}, gpu.Proc{PID: 201, Name: "voice", Used: 4 * GiB})
+	b.Tick(context.Background())
+	borrower.Release()
+	c.used = 18 * GiB
+	c.set(gpu.Proc{PID: 101, Name: "maya", Used: 17*GiB + 512*gpu.MiB})
+	b.Tick(context.Background())
+	if got, want := takeReturn(t, holder), (ReturnAsk{ID: "t1"}); got != want {
+		t.Fatalf("return ask = %+v, want %+v", got, want)
+	}
+}
+
 // A lend the engine refuses falls through to a drain of that same holder,
 // once, and the waiter is told it is draining.
 func TestRefusedLendFallsThroughToADrain(t *testing.T) {

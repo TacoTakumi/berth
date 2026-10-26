@@ -165,7 +165,11 @@ func (b *Broker) lendRoom(w *lease, budget cardBudget, drainable []*lease, now t
 	if w.needs == 0 {
 		return "", false // a whole-card waiter cannot take part of a card
 	}
-	short := sat(w.needs, budget.avail())
+	// The holders can count more than the ceiling: a whole-card holder counts
+	// the total, and the baseline, reserve and squatters sit inside it. avail
+	// stops at zero, so that overlap is added back, or the lend leaves the
+	// waiter short by it once the card confirms it.
+	short := sat(w.needs, budget.avail()) + sat(budget.held, budget.ceiling())
 	if short == 0 {
 		return "", false // the fits-now branch answered already
 	}
@@ -312,7 +316,7 @@ func (b *Broker) wantReturn(h *lease, gone, next *lease, now time.Time) {
 	// be there before the memory moves back: a lease granted into that space
 	// holds the take-back until it lets go. An unconfirmed lend never counted,
 	// so its ticket is owed back with no room to check.
-	if h.lentID == "" || (h.lend != lending && !b.retirable(h.lentBytes, gone)) {
+	if h.lentID == "" || (h.lend != lending && !b.retirable(h, h.lentBytes, gone)) {
 		return // nothing to return, or the room is taken: the tick asks again
 	}
 	if !h.lendRetry.IsZero() && now.Sub(h.lendRetry) < returnRetry {
@@ -391,13 +395,17 @@ func (b *Broker) heldWith(give uint64, minus *lease) uint64 {
 // ceiling still covers what the card would count once it is back, with gone off
 // it. This is rule 2's no-overlap pointed the other way: Berth never hands a
 // holder memory that another lease was granted into. A card with no measurement
-// has nothing to check.
-func (b *Broker) retirable(give uint64, gone *lease) bool {
+// has nothing to check. The holder's own count stops at the ceiling: a
+// whole-card holder counts the total, which already covers the baseline and
+// reserve, so only the other leases can take its room away.
+func (b *Broker) retirable(h *lease, give uint64, gone *lease) bool {
 	if b.snap.Total == 0 {
 		return true
 	}
 	ceiling := sat(b.snap.Total, b.cfg.Reserve+b.snap.Baseline()+b.squatBytes()+b.claimedBytes())
-	return ceiling >= b.heldWith(give, gone)
+	own := b.budget(h)
+	others := sat(b.heldWith(0, gone), own)
+	return ceiling >= others+min(own+give, ceiling)
 }
 
 // engineOf names a lease's engine, or "" for a lease that is already gone.

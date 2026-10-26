@@ -36,6 +36,12 @@ has a matching GitHub release whose body comes from its section below.
 - A drain that arrives while the run is still parking the engine (`berth stop`, or berthd giving up on the park) is
   kept and acted on when the park ends, instead of dropped.
 - `berth stop` stops a parked or parking engine. It answered "no running engine" before.
+- A lend from a whole-card holder works on a card with a baseline, such as a driver's own memory. The ask left out
+  the baseline, so once the card confirmed the lend the waiter was still short by it and berthd drained the holder
+  it had just lent from. The ask now covers it. The take-back failed the same way: the holder's whole card counted
+  over the ceiling, so the lent memory was never asked back. Only other leases now block a take-back. Seen on a
+  4060 Ti with a 121 MiB baseline: a 6656 MiB lend drained the holder, and a lend that landed was never returned
+  (#189).
 
 ### Added
 
